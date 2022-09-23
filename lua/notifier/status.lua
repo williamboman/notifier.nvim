@@ -12,6 +12,54 @@ local Message = {}
 
 local Component = {}
 
+local WinBuf = {}
+
+
+
+
+function WinBuf.new()
+   return setmetatable({}, { __index = WinBuf })
+end
+
+function WinBuf:set_buffer(buf_nr)
+   self.buf_nr = buf_nr
+   return self
+end
+
+function WinBuf:set_window(win_nr)
+   self.win_nr = win_nr
+   return self
+end
+
+function WinBuf:get_buffer()
+   if self.buf_nr and api.nvim_buf_is_valid(self.buf_nr) then
+      return self.buf_nr
+   end
+end
+
+function WinBuf:get_window()
+   if self.win_nr and api.nvim_win_is_valid(self.win_nr) then
+      return self.win_nr
+   end
+end
+
+function WinBuf:is_valid()
+   return self:get_window() ~= nil and self:get_buffer() ~= nil
+end
+
+function WinBuf:delete()
+   local buf_nr = self:get_buffer()
+   local win_nr = self:get_window()
+   if buf_nr then
+
+
+   end
+   if win_nr then
+      api.nvim_win_close(win_nr, true)
+   end
+   return self
+end
+
 local StatusModule = {}
 
 
@@ -27,8 +75,8 @@ local StatusModule = {}
 
 
 
-StatusModule.buf_nr = nil
-StatusModule.win_nr = nil
+StatusModule.content = WinBuf.new()
+StatusModule.title = WinBuf.new()
 StatusModule.active = {}
 
 local function scheduled(func)
@@ -47,17 +95,21 @@ local function get_status_width()
 end
 
 function StatusModule._create_win()
-   if not StatusModule.win_nr or not api.nvim_win_is_valid(StatusModule.win_nr) then
-      if not StatusModule.buf_nr or not api.nvim_buf_is_valid(StatusModule.buf_nr) then
-         StatusModule.buf_nr = api.nvim_create_buf(false, true);
-      end
+   if not StatusModule.content:get_buffer() then
+      StatusModule.content:set_buffer(api.nvim_create_buf(false, true));
+   end
+   if not StatusModule.title:get_buffer() then
+      StatusModule.title:set_buffer(api.nvim_create_buf(false, true));
+   end
+
+   if not StatusModule.content:get_window() then
       local border
       if cfg.config.debug then
          border = "single"
       else
          border = "none"
       end
-      StatusModule.win_nr = api.nvim_open_win(StatusModule.buf_nr, false, {
+      local win_nr = api.nvim_open_win(StatusModule.content:get_buffer(), false, {
          focusable = false,
          style = "minimal",
          border = border,
@@ -70,39 +122,57 @@ function StatusModule._create_win()
          col = vim.o.columns,
          zindex = cfg.config.zindex,
       })
+      api.nvim_win_set_option(win_nr, "wrap", false)
+      StatusModule.content:set_window(win_nr)
+
       if api.nvim_win_set_hl_ns then
-         api.nvim_win_set_hl_ns(StatusModule.win_nr, cfg.NS_ID)
+         api.nvim_win_set_hl_ns(win_nr, cfg.NS_ID)
+      end
+   end
+
+   if not StatusModule.title:get_window() then
+      local border
+      if cfg.config.debug then
+         border = "single"
+      else
+         border = "none"
+      end
+      local win_nr = api.nvim_open_win(StatusModule.title:get_buffer(), false, {
+         focusable = false,
+         style = "minimal",
+         border = border,
+         noautocmd = true,
+         relative = "editor",
+         anchor = "SE",
+         width = 1,
+         height = 3,
+         row = vim.o.lines - vim.o.cmdheight - 1,
+         col = vim.o.columns - get_status_width(),
+         zindex = cfg.config.zindex,
+      })
+      api.nvim_win_set_option(win_nr, "wrap", false)
+      StatusModule.title:set_window(win_nr)
+
+      if api.nvim_win_set_hl_ns then
+         api.nvim_win_set_hl_ns(win_nr, cfg.NS_ID)
       end
    end
 end
 
 function StatusModule._ui_valid()
-   return StatusModule.win_nr and api.nvim_win_is_valid(StatusModule.win_nr) and
-   StatusModule.buf_nr and api.nvim_buf_is_valid(StatusModule.buf_nr)
+   return StatusModule.content:is_valid() and StatusModule.title:is_valid()
 end
 
 function StatusModule._delete_win()
-   if StatusModule.win_nr and api.nvim_win_is_valid(StatusModule.win_nr) then
-      api.nvim_win_close(StatusModule.win_nr, true)
-   end
-   StatusModule.win_nr = nil
+   StatusModule.content:delete()
+   StatusModule.title:delete()
 end
 
-local function padding(length)
-   local acc = ""
-   while displayw(acc) < length do
-      acc = " " .. acc
+local function pad(str, width)
+   if #str < width then
+      return (" "):rep(width - #str - 1) .. str
    end
-
-   return acc
-end
-
-local function adjust_width(src, width)
-   if displayw(src) > width then
-      return string.sub(src, 1, width - 3) .. "..."
-   else
-      return padding(width - displayw(src)) .. src
-   end
+   return str
 end
 
 StatusModule.redraw = scheduled(function()
@@ -110,19 +180,28 @@ StatusModule.redraw = scheduled(function()
 
    if not StatusModule._ui_valid() then return end
 
+   if cfg.config.debug then
+      vim.pretty_print(StatusModule.content)
+      vim.pretty_print(StatusModule.title)
+   end
+
    local lines = {}
+   local titles = {}
    local hl_infos = {}
-   local width = get_status_width()
 
 
 
    local function push_line(title, content)
-      local message_lines = vim.split(content.mandat, '\n', { plain = true, trimempty = true })
-
-
-      local inner_width = width - (displayw(title) + 1)
-      if content.icon then
-         inner_width = inner_width - (displayw(content.icon) + 1)
+      local message_lines = {}
+      for _, line in ipairs(vim.split(content.mandat, '\n', { plain = true, trimempty = true })) do
+         local content_width = get_status_width()
+         if #line > content_width then
+            for i = 1, #line, content_width do
+               message_lines[#message_lines + 1] = line:sub(i, i + content_width - 1)
+            end
+         else
+            message_lines[#message_lines + 1] = line
+         end
       end
 
       if cfg.config.debug then
@@ -130,40 +209,11 @@ StatusModule.redraw = scheduled(function()
       end
 
       for i, line in ipairs(message_lines) do
-
-
-
-         local fmt_msg
-         if content.opt and i == #message_lines then
-
-            local tmp = string.format("%s (%s)", line, content.opt)
-            if displayw(tmp) > inner_width then
-               fmt_msg = adjust_width(line, inner_width)
-            else
-               fmt_msg = adjust_width(tmp, inner_width)
-            end
-         else
-            fmt_msg = adjust_width(line, inner_width)
-         end
-
-         local formatted
          if i == 1 then
-            if content.icon then
-               formatted = string.format("%s %s %s", fmt_msg, title, content.icon)
-            else
-               formatted = string.format("%s %s", fmt_msg, title)
-            end
-         else
-            formatted = string.format("%s %s", fmt_msg, padding(width - (inner_width + 1)))
+            titles[#lines + 1] = title
          end
-
-         if cfg.config.debug then
-            vim.pretty_print(formatted)
-         end
-
-
-         table.insert(lines, formatted)
-         table.insert(hl_infos, { name = title, dim = content.dim, icon = content.icon })
+         lines[#lines + 1] = line
+         hl_infos[#hl_infos + 1] = { title = title, dim = content.dim, icon = content.icon, content = line, level = content.level }
       end
    end
 
@@ -189,41 +239,42 @@ StatusModule.redraw = scheduled(function()
       end
    end
 
+   local title_width = 0
+   for _, title in pairs(titles) do
+      title_width = math.max(#title + 1, title_width)
+   end
 
    if #lines > 0 then
-      api.nvim_buf_clear_namespace(StatusModule.buf_nr, cfg.NS_ID, 0, -1)
-      api.nvim_buf_set_lines(StatusModule.buf_nr, 0, -1, false, lines)
+      local buf_nr = StatusModule.content:get_buffer()
+      local win_nr = StatusModule.content:get_window()
+      api.nvim_buf_clear_namespace(buf_nr, cfg.NS_ID, 0, -1)
+      api.nvim_buf_set_lines(buf_nr, 0, -1, false, lines)
 
       for i = 1, #hl_infos do
          local hl_group
          if hl_infos[i].dim then
             hl_group = cfg.HL_CONTENT_DIM
          else
-            hl_group = cfg.HL_CONTENT
+            hl_group = cfg.HL_CONTENT[hl_infos[i].level]
          end
 
+         api.nvim_buf_add_highlight(buf_nr, cfg.NS_ID, hl_group, i - 1, 0, -1)
 
-
-         local title_start_offset = #lines[i] - #hl_infos[i].name
-         if hl_infos[i].icon then
-            title_start_offset = title_start_offset - (#hl_infos[i].icon + 1)
-         end
-
-         local title_stop_offset
-         if hl_infos[i].icon then
-            title_stop_offset = #lines[i] - #hl_infos[i].icon - 1
+         if titles[i] then
+            local title = titles[i] .. " "
+            if hl_infos[i].icon then
+               title = hl_infos[i].icon .. " " .. title
+            end
+            api.nvim_buf_set_lines(StatusModule.title:get_buffer(), i - 1, i, false, { pad(title, title_width + 1) })
+            api.nvim_buf_add_highlight(StatusModule.title:get_buffer(), cfg.NS_ID, cfg.HL_TITLE, i - 1, 0, -1)
          else
-            title_stop_offset = -1
-         end
-         api.nvim_buf_add_highlight(StatusModule.buf_nr, cfg.NS_ID, hl_group, i - 1, 0, title_start_offset - 1)
-         api.nvim_buf_add_highlight(StatusModule.buf_nr, cfg.NS_ID, cfg.HL_TITLE, i - 1, title_start_offset, title_stop_offset)
-
-         if hl_infos[i].icon then
-            api.nvim_buf_add_highlight(StatusModule.buf_nr, cfg.NS_ID, cfg.HL_ICON, i - 1, title_stop_offset + 1, -1)
+            api.nvim_buf_set_lines(StatusModule.title:get_buffer(), i - 1, i, false, { "" })
          end
       end
 
-      api.nvim_win_set_height(StatusModule.win_nr, #lines)
+      api.nvim_win_set_height(win_nr, #lines)
+      api.nvim_win_set_height(StatusModule.title:get_window(), #lines)
+      api.nvim_win_set_width(StatusModule.title:get_window(), title_width)
    else
       StatusModule._delete_win()
    end
@@ -246,10 +297,6 @@ function StatusModule._ensure_valid(msg)
       error("Message icon cannot contain newlines")
    end
 
-   if msg.opt and string.find(msg.opt, "\n") then
-      error("Message optional part cannot contain newlines")
-   end
-
    return true
 end
 
@@ -263,7 +310,7 @@ function StatusModule.push(component, content, title)
    end
 
    content = content
-   if StatusModule._ensure_valid(content) then
+   if not cfg.config.debug or StatusModule._ensure_valid(content) then
       if title then
          StatusModule.active[component][title] = content
       else
@@ -293,7 +340,11 @@ function StatusModule.handle(msg)
    if msg.done then
       StatusModule.pop("lsp", msg.name)
    else
-      StatusModule.push("lsp", { mandat = msg.title, opt = msg.message, dim = true }, msg.name)
+      local mandat = msg.title
+      if msg.message then
+         mandat = mandat .. " " .. msg.message
+      end
+      StatusModule.push("lsp", { mandat = mandat, title = msg.name, level = vim.log.levels.INFO, dim = true }, msg.name)
    end
 end
 

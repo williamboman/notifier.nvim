@@ -47,6 +47,11 @@ global record vim
     record CreateUserCommandOptions
     end
 
+    record BufDeleteOptions
+      force: boolean
+      unload: boolean
+    end
+
     record CreateAutocmdOptions
       group: string|integer|nil
       pattern: string|{string}|nil
@@ -62,6 +67,8 @@ global record vim
     nvim_buf_clear_namespace: function(BufNr, NSId, integer, integer)
     nvim_buf_is_valid: function(BufNr): boolean
     nvim_buf_set_lines: function(BufNr, integer, integer, boolean, {string})
+    nvim_buf_set_option: function(BufNr, string, any|nil)
+    nvim_buf_delete: function(BufNr, BufDeleteOptions)
     nvim_create_augroup: function(string, CreateAugroupOptions)
     nvim_create_autocmd: function(string|{string}, CreateAutocmdOptions)
     nvim_create_buf: function(boolean, boolean): BufNr
@@ -71,7 +78,9 @@ global record vim
     nvim_set_hl: function(NSId, string, SetHlOptions)
     nvim_win_close: function(WinNr, boolean)
     nvim_win_is_valid: function(WinNr): boolean
+    nvim_win_set_option: function(WinNr, string, any|nil)
     nvim_win_set_height: function(WinNr, integer)
+    nvim_win_set_width: function(WinNr, integer)
     nvim_win_set_hl_ns: function(WinNr, NSId)
   end
 
@@ -113,7 +122,7 @@ global record vim
   tbl_deep_extend: function(string, ...: table): table
   tbl_islist: function({any:any}): boolean
 
-  pretty_print: function(any)
+  pretty_print: function(...: any)
 
   split: function(string, string, SplitOptions): {string}
 
